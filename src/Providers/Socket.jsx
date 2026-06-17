@@ -9,7 +9,8 @@ export const useSocket = () => {
 
 export const SocketProvider = (props) => {
   const socket = useMemo(() => {
-    const socketInstance = io('http://localhost:8001');
+    // const socketInstance = io('http://localhost:8001');
+    const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
     
     socketInstance.on('connect', () => {
       console.log('Socket connected successfully');
