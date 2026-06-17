@@ -50,11 +50,14 @@ io.on("connection", (socket) => {
     socket.to(socketId).emit("call-accepted", { ans });
   });
 
-  // NEW: Handle ICE candidates
   socket.on("ice-candidate", (data) => {
     const { emailId, candidate } = data;
+    console.log(`ICE candidate from ${emailId}`);
     const socketId = emailToSocketMapping.get(emailId);
-    if (!socketId) return;
+    if (!socketId) {
+      console.log(`No socket found for ${emailId}`);
+      return;
+    }
     socket.to(socketId).emit("ice-candidate", { candidate });
   });
 
