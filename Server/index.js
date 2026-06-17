@@ -5,10 +5,11 @@ const { Server } = require("socket.io");
 const app = express();
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 8001;
+const EXPRESS_PORT = process.env.PORT || 8000;
+const SOCKET_PORT = 8001;
 const CLIENT_URL = process.env.CLIENT_URL || "*";
 
-const io = new Server(PORT, {
+const io = new Server(SOCKET_PORT, {
   cors: {
     origin: CLIENT_URL,
     methods: ["GET", "POST"],
@@ -25,11 +26,9 @@ io.on("connection", (socket) => {
   socket.on("join-room", (data) => {
     const { emailId, roomId } = data;
     console.log(`🚪 ${emailId} joined room ${roomId}`);
-
     emailToSocketMapping.set(emailId, socket.id);
     socketToEmailMapping.set(socket.id, emailId);
     socket.join(roomId);
-
     socket.emit("joined-room", { roomId });
     socket.broadcast.to(roomId).emit("user-joined", { emailId });
   });
@@ -38,23 +37,14 @@ io.on("connection", (socket) => {
     const { emailId, offer } = data;
     const socketId = emailToSocketMapping.get(emailId);
     const fromEmail = socketToEmailMapping.get(socket.id);
-
-    if (!socketId) {
-      console.log(`❌ No socket found for ${emailId}`);
-      return;
-    }
-    console.log(`📞 ${fromEmail} calling ${emailId}`);
+    if (!socketId) return;
     socket.to(socketId).emit("incoming-call", { from: fromEmail, offer });
   });
 
   socket.on("call-accepted", (data) => {
     const { emailId, ans } = data;
     const socketId = emailToSocketMapping.get(emailId);
-    if (!socketId) {
-      console.log(`❌ No socket found for ${emailId}`);
-      return;
-    }
-    console.log(`✅ Call accepted by ${emailId}`);
+    if (!socketId) return;
     socket.to(socketId).emit("call-accepted", { ans });
   });
 
@@ -62,10 +52,7 @@ io.on("connection", (socket) => {
     const { emailId, candidate } = data;
     console.log(`🧊 ICE candidate from ${emailId}`);
     const socketId = emailToSocketMapping.get(emailId);
-    if (!socketId) {
-      console.log(`❌ No socket found for ${emailId}`);
-      return;
-    }
+    if (!socketId) return;
     socket.to(socketId).emit("ice-candidate", { candidate });
   });
 
@@ -79,6 +66,12 @@ io.on("connection", (socket) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server Running On Port ${PORT}`);
+app.get("/", (req, res) => {
+  res.send("Video Chat Backend is running!");
 });
+
+app.listen(EXPRESS_PORT, () => {
+  console.log(`🚀 Express Server Running On Port ${EXPRESS_PORT}`);
+});
+
+console.log(`🔌 Socket.IO Server Running On Port ${SOCKET_PORT}`);
