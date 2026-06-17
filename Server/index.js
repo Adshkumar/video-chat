@@ -20,11 +20,11 @@ const emailToSocketMapping = new Map();
 const socketToEmailMapping = new Map();
 
 io.on("connection", (socket) => {
-  console.log("User Connected:", socket.id);
+  console.log("🟢 User Connected:", socket.id);
 
   socket.on("join-room", (data) => {
     const { emailId, roomId } = data;
-    console.log(`${emailId} joined room ${roomId}`);
+    console.log(`🚪 ${emailId} joined room ${roomId}`);
 
     emailToSocketMapping.set(emailId, socket.id);
     socketToEmailMapping.set(socket.id, emailId);
@@ -39,23 +39,31 @@ io.on("connection", (socket) => {
     const socketId = emailToSocketMapping.get(emailId);
     const fromEmail = socketToEmailMapping.get(socket.id);
 
-    if (!socketId) return;
+    if (!socketId) {
+      console.log(`❌ No socket found for ${emailId}`);
+      return;
+    }
+    console.log(`📞 ${fromEmail} calling ${emailId}`);
     socket.to(socketId).emit("incoming-call", { from: fromEmail, offer });
   });
 
   socket.on("call-accepted", (data) => {
     const { emailId, ans } = data;
     const socketId = emailToSocketMapping.get(emailId);
-    if (!socketId) return;
+    if (!socketId) {
+      console.log(`❌ No socket found for ${emailId}`);
+      return;
+    }
+    console.log(`✅ Call accepted by ${emailId}`);
     socket.to(socketId).emit("call-accepted", { ans });
   });
 
   socket.on("ice-candidate", (data) => {
     const { emailId, candidate } = data;
-    console.log(`ICE candidate from ${emailId}`);
+    console.log(`🧊 ICE candidate from ${emailId}`);
     const socketId = emailToSocketMapping.get(emailId);
     if (!socketId) {
-      console.log(`No socket found for ${emailId}`);
+      console.log(`❌ No socket found for ${emailId}`);
       return;
     }
     socket.to(socketId).emit("ice-candidate", { candidate });
@@ -63,7 +71,7 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     const email = socketToEmailMapping.get(socket.id);
-    console.log("User Disconnected:", socket.id);
+    console.log("🔴 User Disconnected:", socket.id);
     if (email) {
       emailToSocketMapping.delete(email);
     }
@@ -72,5 +80,5 @@ io.on("connection", (socket) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server Running On Port ${PORT}`);
+  console.log(`🚀 Server Running On Port ${PORT}`);
 });

@@ -5,22 +5,22 @@ import React, {
   useCallback,
   useRef,
 } from "react";
+import { useSocket } from "./Socket";
 
 const PeerContext = React.createContext(null);
 
 export const usePeer = () => React.useContext(PeerContext);
 
 export const PeerProvider = ({ children }) => {
+  const { socket } = useSocket();
   const [remoteStream, setRemoteStream] = useState(null);
+  const [peerConnection, setPeerConnection] = useState(null);
   const streamSentRef = useRef(false);
-  const peerRef = useRef(null);
   const targetEmailRef = useRef(null);
-  const socketRef = useRef(null);
+  const peerRef = useRef(null);
 
-  const { socket } = React.useContext(React.createContext(null)) || {};
-
-  const peer = useMemo(() => {
-    const newPeer = new RTCPeerConnection({
+  const createPeerConnection = useCallback(() => {
+    const pc = new RTCPeerConnection({
       iceServers: [
         {
           urls: [
@@ -31,32 +31,56 @@ export const PeerProvider = ({ children }) => {
       ],
     });
 
-    peerRef.current = newPeer;
-    return newPeer;
-  }, []);
-
-  const handleIceCandidate = useCallback(
-    (event) => {
-      if (event.candidate && socketRef.current && targetEmailRef.current) {
+    pc.onicecandidate = (event) => {
+      if (event.candidate && targetEmailRef.current && socket) {
         console.log("📡 Sending ICE candidate to:", targetEmailRef.current);
-        socketRef.current.emit("ice-candidate", {
+        socket.emit("ice-candidate", {
           emailId: targetEmailRef.current,
           candidate: event.candidate,
         });
       }
-    },
-    []
-  );
+    };
+
+    pc.ontrack = (event) => {
+      console.log("🎥 Remote track received!", event.streams);
+      if (event.streams && event.streams.length > 0) {
+        const stream = event.streams[0];
+        console.log("📺 Setting remote stream:", stream);
+        setRemoteStream(stream);
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log("🔗 Connection State:", pc.connectionState);
+      if (pc.connectionState === "connected") {
+        console.log("✅ Peer connection established!");
+      }
+      if (pc.connectionState === "failed") {
+        console.log("❌ Peer connection failed");
+        streamSentRef.current = false;
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log("🧊 ICE Connection State:", pc.iceConnectionState);
+    };
+
+    peerRef.current = pc;
+    setPeerConnection(pc);
+    return pc;
+  }, [socket]);
 
   const handleRemoteIceCandidate = useCallback(
     async (candidate) => {
       try {
-        if (peerRef.current) {
-          console.log("📥 Adding remote ICE candidate");
-          await peerRef.current.addIceCandidate(
-            new RTCIceCandidate(candidate)
-          );
+        const pc = peerRef.current;
+        if (!pc) {
+          console.log("❌ No peer connection available");
+          return;
         }
+        console.log("📥 Adding remote ICE candidate");
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        console.log("✅ ICE candidate added successfully");
       } catch (error) {
         console.error("❌ Error adding ICE candidate:", error);
       }
@@ -64,66 +88,65 @@ export const PeerProvider = ({ children }) => {
     []
   );
 
-  useEffect(() => {
-    if (socket) {
-      socketRef.current = socket;
-      console.log("✅ Socket reference set in PeerProvider");
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    const peerInstance = peerRef.current;
-    if (!peerInstance) return;
-
-    peerInstance.addEventListener("icecandidate", handleIceCandidate);
-
-    return () => {
-      peerInstance.removeEventListener("icecandidate", handleIceCandidate);
-    };
-  }, [peer, handleIceCandidate]);
-
-  const createOffer = async () => {
+  const createOffer = useCallback(async () => {
     try {
-      const offer = await peer.createOffer({
+      const pc = peerRef.current;
+      if (!pc) {
+        console.log("❌ No peer connection available, creating one");
+        createPeerConnection();
+      }
+      
+      const offer = await pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: true,
       });
-      await peer.setLocalDescription(offer);
+      await pc.setLocalDescription(offer);
       console.log("📝 Offer created");
       return offer;
     } catch (error) {
       console.error("❌ Error creating offer:", error);
       throw error;
     }
-  };
+  }, [createPeerConnection]);
 
-  const createAnswer = async (offer) => {
+  const createAnswer = useCallback(async (offer) => {
     try {
-      await peer.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peer.createAnswer({
+      const pc = peerRef.current;
+      if (!pc) {
+        console.log("❌ No peer connection available, creating one");
+        createPeerConnection();
+      }
+      
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: true,
       });
-      await peer.setLocalDescription(answer);
+      await pc.setLocalDescription(answer);
       console.log("📝 Answer created");
       return answer;
     } catch (error) {
       console.error("❌ Error creating answer:", error);
       throw error;
     }
-  };
+  }, [createPeerConnection]);
 
-  const setRemoteAnswer = async (ans) => {
+  const setRemoteAnswer = useCallback(async (ans) => {
     try {
-      await peer.setRemoteDescription(new RTCSessionDescription(ans));
+      const pc = peerRef.current;
+      if (!pc) {
+        console.log("❌ No peer connection available");
+        return;
+      }
+      await pc.setRemoteDescription(new RTCSessionDescription(ans));
       console.log("✅ Remote answer set");
     } catch (error) {
       console.error("❌ Error setting remote answer:", error);
       throw error;
     }
-  };
+  }, []);
 
-  const sendStream = async (stream) => {
+  const sendStream = useCallback(async (stream) => {
     if (!stream) {
       console.error("❌ No stream to send");
       return;
@@ -135,19 +158,25 @@ export const PeerProvider = ({ children }) => {
     }
 
     try {
+      const pc = peerRef.current;
+      if (!pc) {
+        console.log("❌ No peer connection available, creating one");
+        createPeerConnection();
+      }
+
       console.log("📤 Sending stream with tracks:", stream.getTracks().map(t => t.kind));
       
-      const senders = peer.getSenders();
+      const senders = pc.getSenders();
       for (const sender of senders) {
         if (sender.track) {
-          peer.removeTrack(sender);
+          pc.removeTrack(sender);
           console.log("🗑️ Removed existing sender:", sender.track.kind);
         }
       }
 
       const tracks = stream.getTracks();
       for (const track of tracks) {
-        peer.addTrack(track, stream);
+        pc.addTrack(track, stream);
         console.log("✅ Added track:", track.kind);
       }
 
@@ -157,52 +186,33 @@ export const PeerProvider = ({ children }) => {
       console.error("❌ Error adding tracks:", error);
       throw error;
     }
-  };
+  }, [createPeerConnection]);
 
-  const handleTrackEvent = useCallback((ev) => {
-    const streams = ev.streams;
-    console.log("📥 Remote Stream Received:", streams);
-    
-    if (streams && streams.length > 0) {
-      const remoteStream = streams[0];
-      setRemoteStream(remoteStream);
-      
-      remoteStream.getTracks().forEach(track => {
-        console.log(`📹 Remote track: ${track.kind}, enabled: ${track.enabled}`);
-      });
-    }
+  const setTargetEmail = useCallback((email) => {
+    targetEmailRef.current = email;
+    console.log("🎯 Target email set to:", email);
   }, []);
 
-  const handleConnectionStateChange = useCallback(() => {
-    const state = peer.connectionState;
-    console.log(`🔗 Connection State: ${state}`);
-    
-    if (state === "connected") {
-      console.log("✅ Peer connection established!");
+  useEffect(() => {
+    if (!peerRef.current) {
+      createPeerConnection();
     }
-    
-    if (state === "failed") {
-      console.log("❌ Peer connection failed");
-      streamSentRef.current = false;
-    }
-    
-    if (state === "disconnected") {
-      console.log("🔌 Peer connection disconnected");
-    }
-  }, [peer]);
+  }, [createPeerConnection]);
 
   useEffect(() => {
-    const peerInstance = peerRef.current;
-    if (!peerInstance) return;
+    if (!socket) return;
 
-    peerInstance.addEventListener("track", handleTrackEvent);
-    peerInstance.addEventListener("connectionstatechange", handleConnectionStateChange);
+    const handleIceCandidate = ({ candidate }) => {
+      console.log("📡 Received ICE candidate from peer");
+      handleRemoteIceCandidate(candidate);
+    };
+
+    socket.on("ice-candidate", handleIceCandidate);
 
     return () => {
-      peerInstance.removeEventListener("track", handleTrackEvent);
-      peerInstance.removeEventListener("connectionstatechange", handleConnectionStateChange);
+      socket.off("ice-candidate", handleIceCandidate);
     };
-  }, [peer, handleTrackEvent, handleConnectionStateChange]);
+  }, [socket, handleRemoteIceCandidate]);
 
   useEffect(() => {
     return () => {
@@ -213,15 +223,10 @@ export const PeerProvider = ({ children }) => {
     };
   }, []);
 
-  const setTargetEmail = (email) => {
-    targetEmailRef.current = email;
-    console.log("🎯 Target email set to:", email);
-  };
-
   return (
     <PeerContext.Provider
       value={{
-        peer,
+        peer: peerRef.current,
         createOffer,
         createAnswer,
         setRemoteAnswer,
