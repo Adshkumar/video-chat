@@ -12,42 +12,86 @@ export const usePeer = () => React.useContext(PeerContext);
 
 export const PeerProvider = ({ children }) => {
   const [remoteStream, setRemoteStream] = useState(null);
-  const [isStreamSent, setIsStreamSent] = useState(false);
+  const [localStream, setLocalStream] = useState(null);
   const streamSentRef = useRef(false);
+  const peerRef = useRef(null);
 
-  const peer = useMemo(
-    () =>
-      new RTCPeerConnection({
-        iceServers: [
-          {
-            urls: [
-              "stun:stun.l.google.com:19302",
-              "stun:global.stun.twilio.com:3478",
-            ],
-          },
-        ],
-      }),
-    []
-  );
+  const peer = useMemo(() => {
+    const newPeer = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: [
+            "stun:stun.l.google.com:19302",
+            "stun:global.stun.twilio.com:3478",
+          ],
+        },
+      ],
+    });
+
+    peerRef.current = newPeer;
+    return newPeer;
+  }, []);
+
+  useEffect(() => {
+    const handleIceCandidate = (event) => {
+      if (event.candidate) {
+        console.log('ICE Candidate gathered');
+      }
+    };
+
+    peer.addEventListener('icecandidate', handleIceCandidate);
+    
+    return () => {
+      peer.removeEventListener('icecandidate', handleIceCandidate);
+    };
+  }, [peer]);
 
   const createOffer = async () => {
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    return offer;
+    try {
+      const offer = await peer.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+      });
+      await peer.setLocalDescription(offer);
+      console.log('Offer created:', offer);
+      return offer;
+    } catch (error) {
+      console.error('Error creating offer:', error);
+      throw error;
+    }
   };
 
   const createAnswer = async (offer) => {
-    await peer.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peer.createAnswer();
-    await peer.setLocalDescription(answer);
-    return answer;
+    try {
+      await peer.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peer.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+      });
+      await peer.setLocalDescription(answer);
+      console.log('Answer created:', answer);
+      return answer;
+    } catch (error) {
+      console.error('Error creating answer:', error);
+      throw error;
+    }
   };
 
   const setRemoteAnswer = async (ans) => {
-    await peer.setRemoteDescription(new RTCSessionDescription(ans));
+    try {
+      await peer.setRemoteDescription(new RTCSessionDescription(ans));
+      console.log('Remote answer set');
+    } catch (error) {
+      console.error('Error setting remote answer:', error);
+      throw error;
+    }
   };
 
   const sendStream = async (stream) => {
+    if (!stream) {
+      console.error('No stream to send');
+      return;
+    }
 
     if (streamSentRef.current) {
       console.log('Stream already sent, skipping...');
@@ -55,58 +99,73 @@ export const PeerProvider = ({ children }) => {
     }
 
     try {
-      const tracks = stream.getTracks();
+      console.log('Sending stream with tracks:', stream.getTracks().map(t => t.kind));
       
-      const existingSenders = peer.getSenders();
-      const existingTrackIds = existingSenders.map(s => s.track?.id);
-      
-      for (const track of tracks) {
-
-        if (!existingTrackIds.includes(track.id)) {
-          peer.addTrack(track, stream);
-          console.log('Added track:', track.kind);
-        } else {
-          console.log('Track already exists:', track.kind);
+      const senders = peer.getSenders();
+      for (const sender of senders) {
+        if (sender.track) {
+          peer.removeTrack(sender);
+          console.log('Removed existing sender:', sender.track.kind);
         }
       }
-      
+
+      const tracks = stream.getTracks();
+      for (const track of tracks) {
+        peer.addTrack(track, stream);
+        console.log('Added track:', track.kind);
+      }
+
       streamSentRef.current = true;
-      setIsStreamSent(true);
+      setLocalStream(stream);
+      
+      console.log('All tracks added successfully');
     } catch (error) {
       console.error('Error adding tracks:', error);
+      throw error;
     }
-  };
-
-  const resetStreamState = () => {
-    streamSentRef.current = false;
-    setIsStreamSent(false);
   };
 
   const handleTrackEvent = useCallback((ev) => {
     const streams = ev.streams;
-    console.log("Remote Stream Received");
-    setRemoteStream(streams[0]);
+    console.log("Remote Stream Received:", streams);
+    
+    if (streams && streams.length > 0) {
+      const remoteStream = streams[0];
+      setRemoteStream(remoteStream);
+      
+      remoteStream.getTracks().forEach(track => {
+        console.log('Remote track:', track.kind, track.enabled);
+      });
+    }
   }, []);
+
+  const handleConnectionStateChange = useCallback(() => {
+    console.log("Connection State:", peer.connectionState);
+    
+    if (peer.connectionState === 'connected') {
+      console.log('Peer connection established!');
+    }
+    
+    if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
+      streamSentRef.current = false;
+    }
+  }, [peer]);
 
   useEffect(() => {
     peer.addEventListener("track", handleTrackEvent);
-
-    peer.addEventListener("connectionstatechange", () => {
-      console.log("Connection State:", peer.connectionState);
-      
-      if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
-        resetStreamState();
-      }
-    });
+    peer.addEventListener("connectionstatechange", handleConnectionStateChange);
 
     return () => {
       peer.removeEventListener("track", handleTrackEvent);
+      peer.removeEventListener("connectionstatechange", handleConnectionStateChange);
     };
-  }, [peer, handleTrackEvent]);
+  }, [peer, handleTrackEvent, handleConnectionStateChange]);
 
   useEffect(() => {
     return () => {
-      peer.close();
+      if (peer) {
+        peer.close();
+      }
     };
   }, [peer]);
 
@@ -119,8 +178,7 @@ export const PeerProvider = ({ children }) => {
         setRemoteAnswer,
         sendStream,
         remoteStream,
-        resetStreamState,
-        isStreamSent,
+        localStream,
       }}
     >
       {children}

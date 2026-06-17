@@ -15,42 +15,54 @@ const RoomPage = () => {
     setRemoteAnswer,
     sendStream,
     remoteStream,
-    resetStreamState,
-    isStreamSent,
   } = usePeer();
 
   const [myStream, setMyStream] = useState(null);
   const [userEmail, setUserEmail] = useState("");
   const [roomId, setRoomId] = useState("");
   const [isJoining, setIsJoining] = useState(false);
-  const [isCalling, setIsCalling] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
 
   const myVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const hasJoinedRef = useRef(false);
+  const isCallingRef = useRef(false);
 
   const handleNewUserJoined = useCallback(
     async ({ emailId }) => {
       console.log("New User Joined:", emailId);
       
-      if (isCalling) {
+      if (isCallingRef.current) {
         console.log('Already calling, skipping...');
         return;
       }
 
       try {
-        setIsCalling(true);
+        isCallingRef.current = true;
+        
+        if (!myStream) {
+          console.log('Waiting for local stream...');
+          return;
+        }
+
+        console.log('Creating offer for:', emailId);
         const offer = await createOffer();
+        
+        console.log('Sending offer to:', emailId);
         socket.emit("call-user", {
           emailId,
           offer,
         });
+        
+        await sendStream(myStream);
+        console.log('Stream sent to:', emailId);
+        
       } catch (error) {
         console.error('Error creating offer:', error);
-        setIsCalling(false);
+        isCallingRef.current = false;
       }
     },
-    [createOffer, socket, isCalling]
+    [createOffer, socket, myStream, sendStream]
   );
 
   const handleIncomingCall = useCallback(
@@ -58,16 +70,20 @@ const RoomPage = () => {
       console.log("Incoming Call From:", from);
 
       try {
+        console.log('Creating answer for:', from);
         const ans = await createAnswer(offer);
         
-        if (myStream) {
-          await sendStream(myStream);
-        }
-
+        console.log('Sending answer to:', from);
         socket.emit("call-accepted", {
           emailId: from,
           ans,
         });
+        
+        if (myStream) {
+          await sendStream(myStream);
+          console.log('Stream sent to:', from);
+        }
+        
       } catch (error) {
         console.error('Error handling incoming call:', error);
       }
@@ -81,28 +97,36 @@ const RoomPage = () => {
       
       try {
         await setRemoteAnswer(ans);
-
-        if (myStream) {
-          await sendStream(myStream);
-        }
+        console.log('Remote answer set');
+        
+        setIsConnected(true);
+        
       } catch (error) {
         console.error('Error handling call accepted:', error);
       }
     },
-    [setRemoteAnswer, sendStream, myStream]
+    [setRemoteAnswer]
   );
 
   const getUserMediaStream = useCallback(async () => {
     try {
+      console.log('Requesting camera and microphone...');
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
 
-      console.log("Local Stream:", stream);
+      console.log("Local Stream obtained:", stream);
       setMyStream(stream);
+      
+      if (myVideoRef.current) {
+        myVideoRef.current.srcObject = stream;
+      }
+      
+      return stream;
     } catch (error) {
       console.error("Media Error:", error);
+      alert('Please allow camera and microphone access');
     }
   }, []);
 
@@ -112,13 +136,8 @@ const RoomPage = () => {
       return;
     }
 
-    if (isJoining) {
-      console.log('Already joining...');
-      return;
-    }
-
-    if (hasJoinedRef.current) {
-      console.log('Already joined this room');
+    if (isJoining || hasJoinedRef.current) {
+      console.log('Already joining or joined');
       return;
     }
 
@@ -133,19 +152,24 @@ const RoomPage = () => {
 
     setTimeout(() => {
       setIsJoining(false);
-    }, 2000);
+    }, 1000);
   }, [socket, userEmail, roomId, isJoining]);
 
   useEffect(() => {
     if (myVideoRef.current && myStream) {
       myVideoRef.current.srcObject = myStream;
+      console.log('Local stream attached to video element');
     }
   }, [myStream]);
 
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
-      console.log("Displaying Remote Stream");
       remoteVideoRef.current.srcObject = remoteStream;
+      console.log("Remote stream attached to video element");
+      
+      remoteStream.getTracks().forEach(track => {
+        console.log('Remote video track:', track.kind, track.enabled);
+      });
     }
   }, [remoteStream]);
 
@@ -163,14 +187,7 @@ const RoomPage = () => {
 
   useEffect(() => {
     getUserMediaStream();
-    
-    return () => {
-
-      if (myStream) {
-        myStream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [getUserMediaStream]);
+  }, []);
 
   useEffect(() => {
     const pathParts = window.location.pathname.split('/');
@@ -180,8 +197,9 @@ const RoomPage = () => {
     setRoomId(roomIdFromUrl);
     setUserEmail(emailFromStorage);
 
-    if (roomIdFromUrl && emailFromStorage && !hasJoinedRef.current) {
+    if (roomIdFromUrl && emailFromStorage && myStream && !hasJoinedRef.current) {
       setTimeout(() => {
+        console.log('Auto joining room...');
         socket.emit("join-room", {
           emailId: emailFromStorage,
           roomId: roomIdFromUrl,
@@ -189,7 +207,7 @@ const RoomPage = () => {
         hasJoinedRef.current = true;
       }, 1000);
     }
-  }, [socket]);
+  }, [socket, myStream]);
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
@@ -201,6 +219,11 @@ const RoomPage = () => {
         </p>
         <p className="text-gray-600">
           User Email: <span className="font-bold">{userEmail}</span>
+        </p>
+        <p className="text-gray-600">
+          Status: <span className={`font-bold ${isConnected ? 'text-green-500' : 'text-yellow-500'}`}>
+            {isConnected ? 'Connected ✅' : 'Waiting for connection...'}
+          </span>
         </p>
         <button
           onClick={joinRoom}
@@ -216,7 +239,6 @@ const RoomPage = () => {
       </div>
 
       <div className="flex flex-wrap gap-8">
-        {/* My Video */}
         <div>
           <h2 className="text-xl font-semibold mb-2">My Video</h2>
           <video
@@ -228,7 +250,6 @@ const RoomPage = () => {
           />
         </div>
 
-        {/* Remote Video */}
         <div>
           <h2 className="text-xl font-semibold mb-2">Remote Video</h2>
           <video
