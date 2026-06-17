@@ -1,15 +1,14 @@
 const express = require("express");
-const bodyParser = require("body-parser");
 const { Server } = require("socket.io");
+const http = require("http");
 
 const app = express();
-app.use(bodyParser.json());
+const server = http.createServer(app);
+const PORT = process.env.PORT || 8000; 
 
-const EXPRESS_PORT = process.env.PORT || 8000;
-const SOCKET_PORT = 8001;
 const CLIENT_URL = process.env.CLIENT_URL || "*";
 
-const io = new Server(SOCKET_PORT, {
+const io = new Server(server, {
   cors: {
     origin: CLIENT_URL,
     methods: ["GET", "POST"],
@@ -70,8 +69,6 @@ app.get("/", (req, res) => {
   res.send("Video Chat Backend is running!");
 });
 
-app.listen(EXPRESS_PORT, () => {
-  console.log(`🚀 Express Server Running On Port ${EXPRESS_PORT}`);
+server.listen(PORT, () => {
+  console.log(`🚀 Server Running On Port ${PORT}`);
 });
-
-console.log(`🔌 Socket.IO Server Running On Port ${SOCKET_PORT}`);
