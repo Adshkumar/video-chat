@@ -7,10 +7,15 @@ export const useSocket = () => {
   return React.useContext(SocketContext);
 };
 
-export const SocketProvider = (props) => {
+export const SocketProvider = ({ children }) => {
   const socket = useMemo(() => {
-    // const socketInstance = io('http://localhost:8001');
     const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
+    console.log('Connecting to:', BACKEND_URL);
+    
+    const socketInstance = io(BACKEND_URL, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+    });
     
     socketInstance.on('connect', () => {
       console.log('Socket connected successfully');
@@ -22,10 +27,10 @@ export const SocketProvider = (props) => {
     
     return socketInstance;
   }, []);
-  
+
   return (
     <SocketContext.Provider value={{ socket }}>
-      {props.children}
+      {children}
     </SocketContext.Provider>
   );
 };
