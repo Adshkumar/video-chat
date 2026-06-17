@@ -10,11 +10,11 @@ const PeerContext = React.createContext(null);
 
 export const usePeer = () => React.useContext(PeerContext);
 
-export const PeerProvider = ({ children }) => {
+export const PeerProvider = ({ children, socket }) => {
   const [remoteStream, setRemoteStream] = useState(null);
-  const [localStream, setLocalStream] = useState(null);
   const streamSentRef = useRef(false);
   const peerRef = useRef(null);
+  const userEmailRef = useRef(null);
 
   const peer = useMemo(() => {
     const newPeer = new RTCPeerConnection({
@@ -32,19 +32,43 @@ export const PeerProvider = ({ children }) => {
     return newPeer;
   }, []);
 
-  useEffect(() => {
-    const handleIceCandidate = (event) => {
-      if (event.candidate) {
-        console.log('ICE Candidate gathered');
+  const handleIceCandidate = useCallback(
+    (event) => {
+      if (event.candidate && socket && userEmailRef.current) {
+        console.log("Sending ICE candidate");
+        socket.emit("ice-candidate", {
+          emailId: userEmailRef.current,
+          candidate: event.candidate,
+        });
       }
-    };
+    },
+    [socket]
+  );
 
-    peer.addEventListener('icecandidate', handleIceCandidate);
-    
+  // Receive ICE candidates from the other peer
+  const handleRemoteIceCandidate = useCallback(
+    async (candidate) => {
+      try {
+        if (peerRef.current) {
+          console.log("Received ICE candidate");
+          await peerRef.current.addIceCandidate(
+            new RTCIceCandidate(candidate)
+          );
+        }
+      } catch (error) {
+        console.error("Error adding ICE candidate:", error);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    peer.addEventListener("icecandidate", handleIceCandidate);
+
     return () => {
-      peer.removeEventListener('icecandidate', handleIceCandidate);
+      peer.removeEventListener("icecandidate", handleIceCandidate);
     };
-  }, [peer]);
+  }, [peer, handleIceCandidate]);
 
   const createOffer = async () => {
     try {
@@ -53,10 +77,10 @@ export const PeerProvider = ({ children }) => {
         offerToReceiveVideo: true,
       });
       await peer.setLocalDescription(offer);
-      console.log('Offer created:', offer);
+      console.log("Offer created");
       return offer;
     } catch (error) {
-      console.error('Error creating offer:', error);
+      console.error("Error creating offer:", error);
       throw error;
     }
   };
@@ -69,10 +93,10 @@ export const PeerProvider = ({ children }) => {
         offerToReceiveVideo: true,
       });
       await peer.setLocalDescription(answer);
-      console.log('Answer created:', answer);
+      console.log("Answer created");
       return answer;
     } catch (error) {
-      console.error('Error creating answer:', error);
+      console.error("Error creating answer:", error);
       throw error;
     }
   };
@@ -80,47 +104,45 @@ export const PeerProvider = ({ children }) => {
   const setRemoteAnswer = async (ans) => {
     try {
       await peer.setRemoteDescription(new RTCSessionDescription(ans));
-      console.log('Remote answer set');
+      console.log("Remote answer set");
     } catch (error) {
-      console.error('Error setting remote answer:', error);
+      console.error("Error setting remote answer:", error);
       throw error;
     }
   };
 
   const sendStream = async (stream) => {
     if (!stream) {
-      console.error('No stream to send');
+      console.error("No stream to send");
       return;
     }
 
     if (streamSentRef.current) {
-      console.log('Stream already sent, skipping...');
+      console.log("Stream already sent, skipping...");
       return;
     }
 
     try {
-      console.log('Sending stream with tracks:', stream.getTracks().map(t => t.kind));
+      console.log("Sending stream with tracks:", stream.getTracks().map(t => t.kind));
       
       const senders = peer.getSenders();
       for (const sender of senders) {
         if (sender.track) {
           peer.removeTrack(sender);
-          console.log('Removed existing sender:', sender.track.kind);
+          console.log("Removed existing sender:", sender.track.kind);
         }
       }
 
       const tracks = stream.getTracks();
       for (const track of tracks) {
         peer.addTrack(track, stream);
-        console.log('Added track:', track.kind);
+        console.log("Added track:", track.kind);
       }
 
       streamSentRef.current = true;
-      setLocalStream(stream);
-      
-      console.log('All tracks added successfully');
+      console.log("All tracks added successfully");
     } catch (error) {
-      console.error('Error adding tracks:', error);
+      console.error("Error adding tracks:", error);
       throw error;
     }
   };
@@ -134,7 +156,7 @@ export const PeerProvider = ({ children }) => {
       setRemoteStream(remoteStream);
       
       remoteStream.getTracks().forEach(track => {
-        console.log('Remote track:', track.kind, track.enabled);
+        console.log("Remote track:", track.kind, track.enabled);
       });
     }
   }, []);
@@ -142,11 +164,11 @@ export const PeerProvider = ({ children }) => {
   const handleConnectionStateChange = useCallback(() => {
     console.log("Connection State:", peer.connectionState);
     
-    if (peer.connectionState === 'connected') {
-      console.log('Peer connection established!');
+    if (peer.connectionState === "connected") {
+      console.log("Peer connection established!");
     }
     
-    if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
+    if (peer.connectionState === "failed" || peer.connectionState === "closed") {
       streamSentRef.current = false;
     }
   }, [peer]);
@@ -169,6 +191,10 @@ export const PeerProvider = ({ children }) => {
     };
   }, [peer]);
 
+  const setTargetEmail = (email) => {
+    userEmailRef.current = email;
+  };
+
   return (
     <PeerContext.Provider
       value={{
@@ -178,7 +204,8 @@ export const PeerProvider = ({ children }) => {
         setRemoteAnswer,
         sendStream,
         remoteStream,
-        localStream,
+        handleRemoteIceCandidate,
+        setTargetEmail,
       }}
     >
       {children}

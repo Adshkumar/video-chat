@@ -1,22 +1,18 @@
 const express = require("express");
 const bodyParser = require("body-parser");
-const http = require("http");
 const { Server } = require("socket.io");
 
 const app = express();
-
 app.use(bodyParser.json());
 
-app.get("/", (req, res) => {
-  res.send("Server is running 🚀");
-});
+const PORT = process.env.PORT || 8001;
+const CLIENT_URL = process.env.CLIENT_URL || "*";
 
-const server = http.createServer(app);
-
-const io = new Server(server, {
+const io = new Server(PORT, {
   cors: {
-    origin: "*", // Replace with frontend URL in production
+    origin: CLIENT_URL,
     methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
@@ -24,68 +20,54 @@ const emailToSocketMapping = new Map();
 const socketToEmailMapping = new Map();
 
 io.on("connection", (socket) => {
-  console.log(`User Connected: ${socket.id}`);
+  console.log("User Connected:", socket.id);
 
-  socket.on("join-room", ({ emailId, roomId }) => {
+  socket.on("join-room", (data) => {
+    const { emailId, roomId } = data;
     console.log(`${emailId} joined room ${roomId}`);
 
     emailToSocketMapping.set(emailId, socket.id);
     socketToEmailMapping.set(socket.id, emailId);
-
     socket.join(roomId);
 
-    socket.emit("joined-room", {
-      roomId,
-    });
-
-    socket.to(roomId).emit("user-joined", {
-      emailId,
-    });
+    socket.emit("joined-room", { roomId });
+    socket.broadcast.to(roomId).emit("user-joined", { emailId });
   });
 
-  socket.on("call-user", ({ emailId, offer }) => {
+  socket.on("call-user", (data) => {
+    const { emailId, offer } = data;
     const socketId = emailToSocketMapping.get(emailId);
     const fromEmail = socketToEmailMapping.get(socket.id);
 
-    if (!socketId) {
-      console.log(`User ${emailId} not found`);
-      return;
-    }
-
-    io.to(socketId).emit("incoming-call", {
-      from: fromEmail,
-      offer,
-    });
+    if (!socketId) return;
+    socket.to(socketId).emit("incoming-call", { from: fromEmail, offer });
   });
 
-  socket.on("call-accepted", ({ emailId, ans }) => {
+  socket.on("call-accepted", (data) => {
+    const { emailId, ans } = data;
     const socketId = emailToSocketMapping.get(emailId);
+    if (!socketId) return;
+    socket.to(socketId).emit("call-accepted", { ans });
+  });
 
-    if (!socketId) {
-      console.log(`User ${emailId} not found`);
-      return;
-    }
-
-    io.to(socketId).emit("call-accepted", {
-      ans,
-    });
+  // NEW: Handle ICE candidates
+  socket.on("ice-candidate", (data) => {
+    const { emailId, candidate } = data;
+    const socketId = emailToSocketMapping.get(emailId);
+    if (!socketId) return;
+    socket.to(socketId).emit("ice-candidate", { candidate });
   });
 
   socket.on("disconnect", () => {
     const email = socketToEmailMapping.get(socket.id);
-
-    console.log(`User Disconnected: ${socket.id}`);
-
+    console.log("User Disconnected:", socket.id);
     if (email) {
       emailToSocketMapping.delete(email);
     }
-
     socketToEmailMapping.delete(socket.id);
   });
 });
 
-const PORT = process.env.PORT || 8000;
-
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Server Running On Port ${PORT}`);
 });

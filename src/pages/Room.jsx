@@ -15,6 +15,8 @@ const RoomPage = () => {
     setRemoteAnswer,
     sendStream,
     remoteStream,
+    handleRemoteIceCandidate,
+    setTargetEmail,
   } = usePeer();
 
   const [myStream, setMyStream] = useState(null);
@@ -22,58 +24,79 @@ const RoomPage = () => {
   const [roomId, setRoomId] = useState("");
   const [isJoining, setIsJoining] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [remoteUserEmail, setRemoteUserEmail] = useState(null);
 
   const myVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const hasJoinedRef = useRef(false);
   const isCallingRef = useRef(false);
 
+  useEffect(() => {
+    const handleIceCandidate = ({ candidate }) => {
+      console.log("Received ICE candidate from peer");
+      handleRemoteIceCandidate(candidate);
+    };
+
+    socket.on("ice-candidate", handleIceCandidate);
+
+    return () => {
+      socket.off("ice-candidate", handleIceCandidate);
+    };
+  }, [socket, handleRemoteIceCandidate]);
+
+  
   const handleNewUserJoined = useCallback(
     async ({ emailId }) => {
       console.log("New User Joined:", emailId);
       
       if (isCallingRef.current) {
-        console.log('Already calling, skipping...');
+        console.log("Already calling, skipping...");
         return;
       }
 
       try {
         isCallingRef.current = true;
-        
+        setRemoteUserEmail(emailId);
+        setTargetEmail(emailId);
+
         if (!myStream) {
-          console.log('Waiting for local stream...');
+          console.log("Waiting for local stream...");
           return;
         }
 
-        console.log('Creating offer for:', emailId);
+        console.log("Creating offer for:", emailId);
         const offer = await createOffer();
         
-        console.log('Sending offer to:', emailId);
+        console.log("Sending offer to:", emailId);
         socket.emit("call-user", {
           emailId,
           offer,
         });
         
         await sendStream(myStream);
-        console.log('Stream sent to:', emailId);
+        console.log("Stream sent to:", emailId);
         
       } catch (error) {
-        console.error('Error creating offer:', error);
+        console.error("Error creating offer:", error);
         isCallingRef.current = false;
       }
     },
-    [createOffer, socket, myStream, sendStream]
+    [createOffer, socket, myStream, sendStream, setTargetEmail]
   );
 
+  
   const handleIncomingCall = useCallback(
     async ({ from, offer }) => {
       console.log("Incoming Call From:", from);
 
       try {
-        console.log('Creating answer for:', from);
+        setRemoteUserEmail(from);
+        setTargetEmail(from);
+
+        console.log("Creating answer for:", from);
         const ans = await createAnswer(offer);
         
-        console.log('Sending answer to:', from);
+        console.log("Sending answer to:", from);
         socket.emit("call-accepted", {
           emailId: from,
           ans,
@@ -81,15 +104,16 @@ const RoomPage = () => {
         
         if (myStream) {
           await sendStream(myStream);
-          console.log('Stream sent to:', from);
+          console.log("Stream sent to:", from);
         }
         
       } catch (error) {
-        console.error('Error handling incoming call:', error);
+        console.error("Error handling incoming call:", error);
       }
     },
-    [createAnswer, socket, myStream, sendStream]
+    [createAnswer, socket, myStream, sendStream, setTargetEmail]
   );
+
 
   const handleCallAccepted = useCallback(
     async ({ ans }) => {
@@ -97,12 +121,10 @@ const RoomPage = () => {
       
       try {
         await setRemoteAnswer(ans);
-        console.log('Remote answer set');
-        
+        console.log("Remote answer set");
         setIsConnected(true);
-        
       } catch (error) {
-        console.error('Error handling call accepted:', error);
+        console.error("Error handling call accepted:", error);
       }
     },
     [setRemoteAnswer]
@@ -110,7 +132,7 @@ const RoomPage = () => {
 
   const getUserMediaStream = useCallback(async () => {
     try {
-      console.log('Requesting camera and microphone...');
+      console.log("Requesting camera and microphone...");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
@@ -126,7 +148,7 @@ const RoomPage = () => {
       return stream;
     } catch (error) {
       console.error("Media Error:", error);
-      alert('Please allow camera and microphone access');
+      alert("Please allow camera and microphone access");
     }
   }, []);
 
@@ -137,7 +159,7 @@ const RoomPage = () => {
     }
 
     if (isJoining || hasJoinedRef.current) {
-      console.log('Already joining or joined');
+      console.log("Already joining or joined");
       return;
     }
 
@@ -158,7 +180,7 @@ const RoomPage = () => {
   useEffect(() => {
     if (myVideoRef.current && myStream) {
       myVideoRef.current.srcObject = myStream;
-      console.log('Local stream attached to video element');
+      console.log("Local stream attached to video element");
     }
   }, [myStream]);
 
@@ -168,7 +190,7 @@ const RoomPage = () => {
       console.log("Remote stream attached to video element");
       
       remoteStream.getTracks().forEach(track => {
-        console.log('Remote video track:', track.kind, track.enabled);
+        console.log("Remote video track:", track.kind, track.enabled);
       });
     }
   }, [remoteStream]);
@@ -190,7 +212,7 @@ const RoomPage = () => {
   }, []);
 
   useEffect(() => {
-    const pathParts = window.location.pathname.split('/');
+    const pathParts = window.location.pathname.split("/");
     const roomIdFromUrl = pathParts[pathParts.length - 1];
     const emailFromStorage = localStorage.getItem("userEmail") || "user@example.com";
 
@@ -199,7 +221,7 @@ const RoomPage = () => {
 
     if (roomIdFromUrl && emailFromStorage && myStream && !hasJoinedRef.current) {
       setTimeout(() => {
-        console.log('Auto joining room...');
+        console.log("Auto joining room...");
         socket.emit("join-room", {
           emailId: emailFromStorage,
           roomId: roomIdFromUrl,
@@ -221,8 +243,11 @@ const RoomPage = () => {
           User Email: <span className="font-bold">{userEmail}</span>
         </p>
         <p className="text-gray-600">
-          Status: <span className={`font-bold ${isConnected ? 'text-green-500' : 'text-yellow-500'}`}>
-            {isConnected ? 'Connected ✅' : 'Waiting for connection...'}
+          Remote User: <span className="font-bold">{remoteUserEmail || "Waiting..."}</span>
+        </p>
+        <p className="text-gray-600">
+          Status: <span className={`font-bold ${isConnected ? "text-green-500" : "text-yellow-500"}`}>
+            {isConnected ? "Connected ✅" : "Waiting for connection..."}
           </span>
         </p>
         <button
@@ -230,11 +255,11 @@ const RoomPage = () => {
           disabled={isJoining || hasJoinedRef.current}
           className={`mt-2 px-4 py-2 text-white rounded hover:bg-blue-600 ${
             isJoining || hasJoinedRef.current 
-              ? 'bg-gray-400 cursor-not-allowed' 
-              : 'bg-blue-500'
+              ? "bg-gray-400 cursor-not-allowed" 
+              : "bg-blue-500"
           }`}
         >
-          {isJoining ? 'Joining...' : hasJoinedRef.current ? 'Joined ✅' : 'Manually Join Room'}
+          {isJoining ? "Joining..." : hasJoinedRef.current ? "Joined ✅" : "Manually Join Room"}
         </button>
       </div>
 
