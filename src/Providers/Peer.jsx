@@ -1,52 +1,9 @@
-// import { off } from "process";
-// import React, { useMemo } from "react";
-
-// const PeerContext = React.createContext(null);
-
-// export const usePeer = () => React.useContext(PeerContext);
-
-// export const PeerProvider = (props) => {
-//     const Peer = useMemo(() => new RTCPeerConnection(), {
-//         iceServers: [
-//             {
-//                 urls: [
-//                     "stun:stun.l.google.com:19302",
-//                     "stun:global.stun.twilio.com:3478",
-//                 ],
-//             },
-//         ],
-//     }, []);
-
-//     const createOffer = async () =>{
-//         const offer = await Peer.createOffer();
-//         await Peer.setLocalDescription(offer);
-//         return offer;
-//     }
-
-//     const createAnswer = async (offer) => {
-//         await Peer.setRemoteDescription(offer);
-//         const answer = await Peer.createAnswer();
-//         await Peer.setLocalDescription(answer);
-//         return answer;
-//     }
-
-//     const setRemoteAnswer = async (and) => {
-//         await Peer.setRemoteDescription(ans);
-//     }
-//     return (
-//         <PeerContext.Provider value={{Peer, createOffer, createAnswer, setRemoteAnswer }}>
-//             {props.children}
-//         </PeerContext.Provider>
-//     )
-// }
-
-
-
 import React, {
   useMemo,
   useEffect,
   useState,
   useCallback,
+  useRef,
 } from "react";
 
 const PeerContext = React.createContext(null);
@@ -55,6 +12,8 @@ export const usePeer = () => React.useContext(PeerContext);
 
 export const PeerProvider = ({ children }) => {
   const [remoteStream, setRemoteStream] = useState(null);
+  const [isStreamSent, setIsStreamSent] = useState(false);
+  const streamSentRef = useRef(false);
 
   const peer = useMemo(
     () =>
@@ -89,10 +48,38 @@ export const PeerProvider = ({ children }) => {
   };
 
   const sendStream = async (stream) => {
-    const tracks = stream.getTracks();
-    for (const track of tracks) {
-      peer.addTrack(track, stream);
+
+    if (streamSentRef.current) {
+      console.log('Stream already sent, skipping...');
+      return;
     }
+
+    try {
+      const tracks = stream.getTracks();
+      
+      const existingSenders = peer.getSenders();
+      const existingTrackIds = existingSenders.map(s => s.track?.id);
+      
+      for (const track of tracks) {
+
+        if (!existingTrackIds.includes(track.id)) {
+          peer.addTrack(track, stream);
+          console.log('Added track:', track.kind);
+        } else {
+          console.log('Track already exists:', track.kind);
+        }
+      }
+      
+      streamSentRef.current = true;
+      setIsStreamSent(true);
+    } catch (error) {
+      console.error('Error adding tracks:', error);
+    }
+  };
+
+  const resetStreamState = () => {
+    streamSentRef.current = false;
+    setIsStreamSent(false);
   };
 
   const handleTrackEvent = useCallback((ev) => {
@@ -106,12 +93,22 @@ export const PeerProvider = ({ children }) => {
 
     peer.addEventListener("connectionstatechange", () => {
       console.log("Connection State:", peer.connectionState);
+      
+      if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
+        resetStreamState();
+      }
     });
 
     return () => {
       peer.removeEventListener("track", handleTrackEvent);
     };
   }, [peer, handleTrackEvent]);
+
+  useEffect(() => {
+    return () => {
+      peer.close();
+    };
+  }, [peer]);
 
   return (
     <PeerContext.Provider
@@ -122,6 +119,8 @@ export const PeerProvider = ({ children }) => {
         setRemoteAnswer,
         sendStream,
         remoteStream,
+        resetStreamState,
+        isStreamSent,
       }}
     >
       {children}

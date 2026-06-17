@@ -15,41 +15,62 @@ const RoomPage = () => {
     setRemoteAnswer,
     sendStream,
     remoteStream,
+    resetStreamState,
+    isStreamSent,
   } = usePeer();
 
   const [myStream, setMyStream] = useState(null);
   const [userEmail, setUserEmail] = useState("");
   const [roomId, setRoomId] = useState("");
+  const [isJoining, setIsJoining] = useState(false);
+  const [isCalling, setIsCalling] = useState(false);
 
   const myVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const hasJoinedRef = useRef(false);
 
   const handleNewUserJoined = useCallback(
     async ({ emailId }) => {
       console.log("New User Joined:", emailId);
+      
+      if (isCalling) {
+        console.log('Already calling, skipping...');
+        return;
+      }
 
-      const offer = await createOffer();
-      socket.emit("call-user", {
-        emailId,
-        offer,
-      });
+      try {
+        setIsCalling(true);
+        const offer = await createOffer();
+        socket.emit("call-user", {
+          emailId,
+          offer,
+        });
+      } catch (error) {
+        console.error('Error creating offer:', error);
+        setIsCalling(false);
+      }
     },
-    [createOffer, socket]
+    [createOffer, socket, isCalling]
   );
 
   const handleIncomingCall = useCallback(
     async ({ from, offer }) => {
       console.log("Incoming Call From:", from);
 
-      const ans = await createAnswer(offer);
-      if (myStream) {
-        await sendStream(myStream);
-      }
+      try {
+        const ans = await createAnswer(offer);
+        
+        if (myStream) {
+          await sendStream(myStream);
+        }
 
-      socket.emit("call-accepted", {
-        emailId: from,
-        ans,
-      });
+        socket.emit("call-accepted", {
+          emailId: from,
+          ans,
+        });
+      } catch (error) {
+        console.error('Error handling incoming call:', error);
+      }
     },
     [createAnswer, socket, myStream, sendStream]
   );
@@ -57,10 +78,15 @@ const RoomPage = () => {
   const handleCallAccepted = useCallback(
     async ({ ans }) => {
       console.log("Call Accepted");
-      await setRemoteAnswer(ans);
+      
+      try {
+        await setRemoteAnswer(ans);
 
-      if (myStream) {
-        await sendStream(myStream);
+        if (myStream) {
+          await sendStream(myStream);
+        }
+      } catch (error) {
+        console.error('Error handling call accepted:', error);
       }
     },
     [setRemoteAnswer, sendStream, myStream]
@@ -86,12 +112,29 @@ const RoomPage = () => {
       return;
     }
 
+    if (isJoining) {
+      console.log('Already joining...');
+      return;
+    }
+
+    if (hasJoinedRef.current) {
+      console.log('Already joined this room');
+      return;
+    }
+
+    setIsJoining(true);
+    hasJoinedRef.current = true;
+
     console.log(`Joining room ${roomId} as ${userEmail}`);
     socket.emit("join-room", {
       emailId: userEmail,
       roomId: roomId,
     });
-  }, [socket, userEmail, roomId]);
+
+    setTimeout(() => {
+      setIsJoining(false);
+    }, 2000);
+  }, [socket, userEmail, roomId, isJoining]);
 
   useEffect(() => {
     if (myVideoRef.current && myStream) {
@@ -120,6 +163,13 @@ const RoomPage = () => {
 
   useEffect(() => {
     getUserMediaStream();
+    
+    return () => {
+
+      if (myStream) {
+        myStream.getTracks().forEach(track => track.stop());
+      }
+    };
   }, [getUserMediaStream]);
 
   useEffect(() => {
@@ -130,13 +180,14 @@ const RoomPage = () => {
     setRoomId(roomIdFromUrl);
     setUserEmail(emailFromStorage);
 
-    if (roomIdFromUrl && emailFromStorage) {
+    if (roomIdFromUrl && emailFromStorage && !hasJoinedRef.current) {
       setTimeout(() => {
         socket.emit("join-room", {
           emailId: emailFromStorage,
           roomId: roomIdFromUrl,
         });
-      }, 500);
+        hasJoinedRef.current = true;
+      }, 1000);
     }
   }, [socket]);
 
@@ -153,13 +204,19 @@ const RoomPage = () => {
         </p>
         <button
           onClick={joinRoom}
-          className="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          disabled={isJoining || hasJoinedRef.current}
+          className={`mt-2 px-4 py-2 text-white rounded hover:bg-blue-600 ${
+            isJoining || hasJoinedRef.current 
+              ? 'bg-gray-400 cursor-not-allowed' 
+              : 'bg-blue-500'
+          }`}
         >
-          Manually Join Room
+          {isJoining ? 'Joining...' : hasJoinedRef.current ? 'Joined ✅' : 'Manually Join Room'}
         </button>
       </div>
 
       <div className="flex flex-wrap gap-8">
+        {/* My Video */}
         <div>
           <h2 className="text-xl font-semibold mb-2">My Video</h2>
           <video
@@ -171,6 +228,7 @@ const RoomPage = () => {
           />
         </div>
 
+        {/* Remote Video */}
         <div>
           <h2 className="text-xl font-semibold mb-2">Remote Video</h2>
           <video
