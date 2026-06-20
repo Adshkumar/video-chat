@@ -15,7 +15,6 @@ const RoomPage = () => {
     setRemoteAnswer,
     sendStream,
     remoteStream,
-    handleRemoteIceCandidate,
     setTargetEmail,
   } = usePeer();
 
@@ -31,20 +30,9 @@ const RoomPage = () => {
   const remoteVideoRef = useRef(null);
   const hasJoinedRef = useRef(false);
   const isCallingRef = useRef(false);
-  const peerConnectionRef = useRef(null);
+  const myStreamRef = useRef(null);
 
-  useEffect(() => {
-    const handleIceCandidate = ({ candidate }) => {
-      console.log("📡 Received ICE candidate from peer:", candidate);
-      handleRemoteIceCandidate(candidate);
-    };
-
-    socket.on("ice-candidate", handleIceCandidate);
-
-    return () => {
-      socket.off("ice-candidate", handleIceCandidate);
-    };
-  }, [socket, handleRemoteIceCandidate]);
+  // NOTE: ICE candidates are handled ONLY in Peer.jsx provider - no duplicate handler here
 
   const handleNewUserJoined = useCallback(
     async ({ emailId }) => {
@@ -61,10 +49,16 @@ const RoomPage = () => {
         setTargetEmail(emailId);
         setConnectionStatus("Connecting...");
 
-        if (!myStream) {
-          console.log("⏳ Waiting for local stream...");
+        const stream = myStreamRef.current;
+        if (!stream) {
+          console.log("⏳ No local stream available yet");
+          isCallingRef.current = false;
           return;
         }
+
+        // IMPORTANT: Add tracks BEFORE creating offer so they are included in SDP
+        console.log("📤 Adding local tracks before creating offer...");
+        await sendStream(stream);
 
         console.log("📞 Creating offer for:", emailId);
         const offer = await createOffer();
@@ -75,8 +69,7 @@ const RoomPage = () => {
           offer,
         });
         
-        await sendStream(myStream);
-        console.log("✅ Stream sent to:", emailId);
+        console.log("✅ Offer sent to:", emailId);
         
       } catch (error) {
         console.error("❌ Error creating offer:", error);
@@ -84,8 +77,9 @@ const RoomPage = () => {
         setConnectionStatus("Failed");
       }
     },
-    [createOffer, socket, myStream, sendStream, setTargetEmail]
-  )
+    [createOffer, socket, sendStream, setTargetEmail]
+  );
+
   const handleIncomingCall = useCallback(
     async ({ from, offer }) => {
       console.log("📞 Incoming Call From:", from);
@@ -94,6 +88,14 @@ const RoomPage = () => {
         setRemoteUserEmail(from);
         setTargetEmail(from);
         setConnectionStatus("Connecting...");
+
+        const stream = myStreamRef.current;
+
+        // Add tracks BEFORE creating answer so they are included in SDP
+        if (stream) {
+          console.log("📤 Adding local tracks before creating answer...");
+          await sendStream(stream);
+        }
 
         console.log("📝 Creating answer for:", from);
         const ans = await createAnswer(offer);
@@ -104,42 +106,32 @@ const RoomPage = () => {
           ans,
         });
         
-        if (myStream) {
-          await sendStream(myStream);
-          console.log("✅ Stream sent to:", from);
-        }
+        console.log("✅ Answer sent to:", from);
         
       } catch (error) {
         console.error("❌ Error handling incoming call:", error);
         setConnectionStatus("Failed");
       }
     },
-    [createAnswer, socket, myStream, sendStream, setTargetEmail]
+    [createAnswer, socket, sendStream, setTargetEmail]
   );
+
   const handleCallAccepted = useCallback(
     async ({ ans }) => {
-      console.log("✅ Call Accepted");
+      console.log("✅ Call Accepted, setting remote answer...");
       
       try {
         await setRemoteAnswer(ans);
-        console.log("✅ Remote answer set");
+        console.log("✅ Remote answer set successfully");
         setIsConnected(true);
-        setConnectionStatus("Connected");
-
-        if (remoteStream) {
-          console.log("🎥 Remote stream already available");
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = remoteStream;
-          }
-        }
+        setConnectionStatus("Connected ✅");
       } catch (error) {
         console.error("❌ Error handling call accepted:", error);
         setConnectionStatus("Failed");
       }
     },
-    [setRemoteAnswer, remoteStream]
+    [setRemoteAnswer]
   );
-
 
   const getUserMediaStream = useCallback(async () => {
     try {
@@ -149,8 +141,9 @@ const RoomPage = () => {
         audio: true,
       });
 
-      console.log("✅ Local Stream obtained:", stream);
+      console.log("✅ Local Stream obtained:", stream.id);
       setMyStream(stream);
+      myStreamRef.current = stream;
       
       if (myVideoRef.current) {
         myVideoRef.current.srcObject = stream;
@@ -191,6 +184,7 @@ const RoomPage = () => {
     }, 1000);
   }, [socket, userEmail, roomId, isJoining]);
 
+  // Attach local stream to video element
   useEffect(() => {
     if (myVideoRef.current && myStream) {
       myVideoRef.current.srcObject = myStream;
@@ -198,41 +192,61 @@ const RoomPage = () => {
     }
   }, [myStream]);
 
-
+  // Attach remote stream to video element
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
-      console.log("📺 Remote stream attached to video element");
+      console.log("📺 Remote stream attached to video element, tracks:", remoteStream.getTracks().map(t => `${t.kind}:${t.enabled}`));
       remoteVideoRef.current.srcObject = remoteStream;
+      setIsConnected(true);
       setConnectionStatus("Connected ✅");
       
       remoteStream.getTracks().forEach(track => {
-        console.log(`📹 Remote track: ${track.kind}, enabled: ${track.enabled}`);
+        console.log(`📹 Remote track: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
       });
     }
   }, [remoteStream]);
 
+  // Handle remote user disconnect
+  const handleUserDisconnected = useCallback(({ emailId }) => {
+    console.log("👋 User disconnected:", emailId);
+    if (emailId === remoteUserEmail) {
+      setRemoteUserEmail(null);
+      setIsConnected(false);
+      setConnectionStatus("Remote user left");
+      isCallingRef.current = false;
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
+      }
+    }
+  }, [remoteUserEmail]);
+
+  // Socket event listeners
   useEffect(() => {
     socket.on("user-joined", handleNewUserJoined);
     socket.on("incoming-call", handleIncomingCall);
     socket.on("call-accepted", handleCallAccepted);
+    socket.on("user-disconnected", handleUserDisconnected);
 
     return () => {
       socket.off("user-joined", handleNewUserJoined);
       socket.off("incoming-call", handleIncomingCall);
       socket.off("call-accepted", handleCallAccepted);
+      socket.off("user-disconnected", handleUserDisconnected);
     };
-  }, [socket, handleNewUserJoined, handleIncomingCall, handleCallAccepted]);
+  }, [socket, handleNewUserJoined, handleIncomingCall, handleCallAccepted, handleUserDisconnected]);
 
+  // Get media stream on mount
   useEffect(() => {
     getUserMediaStream();
     
     return () => {
-      if (myStream) {
-        myStream.getTracks().forEach(track => track.stop());
+      if (myStreamRef.current) {
+        myStreamRef.current.getTracks().forEach(track => track.stop());
       }
     };
   }, [getUserMediaStream]);
 
+  // Auto-join room from URL
   useEffect(() => {
     const pathParts = window.location.pathname.split("/");
     const roomIdFromUrl = pathParts[pathParts.length - 1];
@@ -253,12 +267,6 @@ const RoomPage = () => {
       }, 2000);
     }
   }, [socket, myStream]);
-
-  useEffect(() => {
-    if (isConnected) {
-      setConnectionStatus("Connected ✅");
-    }
-  }, [isConnected]);
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
@@ -322,7 +330,7 @@ const RoomPage = () => {
         </div>
 
         {/* Remote Video */}
-        <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div className="bg-white rounded-xl shadow-lg overflow-hidden relative">
           <div className="bg-gray-800 px-4 py-2">
             <h2 className="text-white font-semibold">👤 Remote Video</h2>
           </div>
