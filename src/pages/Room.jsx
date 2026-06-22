@@ -32,8 +32,6 @@ const RoomPage = () => {
   const isCallingRef = useRef(false);
   const myStreamRef = useRef(null);
 
-  // NOTE: ICE candidates are handled ONLY in Peer.jsx provider - no duplicate handler here
-
   const handleNewUserJoined = useCallback(
     async ({ emailId }) => {
       console.log("👤 New User Joined:", emailId);
@@ -56,8 +54,7 @@ const RoomPage = () => {
           return;
         }
 
-        // IMPORTANT: Add tracks BEFORE creating offer so they are included in SDP
-        console.log("📤 Adding local tracks before creating offer...");
+        // console.log("📤 Adding local tracks before creating offer...");
         await sendStream(stream);
 
         console.log("📞 Creating offer for:", emailId);
@@ -91,7 +88,6 @@ const RoomPage = () => {
 
         const stream = myStreamRef.current;
 
-        // Add tracks BEFORE creating answer so they are included in SDP
         if (stream) {
           console.log("📤 Adding local tracks before creating answer...");
           await sendStream(stream);
@@ -184,7 +180,6 @@ const RoomPage = () => {
     }, 1000);
   }, [socket, userEmail, roomId, isJoining]);
 
-  // Attach local stream to video element
   useEffect(() => {
     if (myVideoRef.current && myStream) {
       myVideoRef.current.srcObject = myStream;
@@ -192,7 +187,6 @@ const RoomPage = () => {
     }
   }, [myStream]);
 
-  // Attach remote stream to video element
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       console.log("📺 Remote stream attached to video element, tracks:", remoteStream.getTracks().map(t => `${t.kind}:${t.enabled}`));
@@ -206,7 +200,6 @@ const RoomPage = () => {
     }
   }, [remoteStream]);
 
-  // Handle remote user disconnect
   const handleUserDisconnected = useCallback(({ emailId }) => {
     console.log("👋 User disconnected:", emailId);
     if (emailId === remoteUserEmail) {
@@ -220,7 +213,6 @@ const RoomPage = () => {
     }
   }, [remoteUserEmail]);
 
-  // Socket event listeners
   useEffect(() => {
     socket.on("user-joined", handleNewUserJoined);
     socket.on("incoming-call", handleIncomingCall);
@@ -235,7 +227,6 @@ const RoomPage = () => {
     };
   }, [socket, handleNewUserJoined, handleIncomingCall, handleCallAccepted, handleUserDisconnected]);
 
-  // Get media stream on mount
   useEffect(() => {
     getUserMediaStream();
     
@@ -246,7 +237,6 @@ const RoomPage = () => {
     };
   }, [getUserMediaStream]);
 
-  // Auto-join room from URL
   useEffect(() => {
     const pathParts = window.location.pathname.split("/");
     const roomIdFromUrl = pathParts[pathParts.length - 1];
@@ -349,7 +339,7 @@ const RoomPage = () => {
       </div>
 
       {/* Debug Info */}
-      <div className="mt-8 max-w-4xl mx-auto bg-gray-900 rounded-xl p-4">
+      {/* <div className="mt-8 max-w-4xl mx-auto bg-gray-900 rounded-xl p-4">
         <details>
           <summary className="text-white cursor-pointer font-semibold">
             🔧 Debug Info
@@ -364,7 +354,7 @@ const RoomPage = () => {
             <p>Has Joined: {hasJoinedRef.current ? "✅" : "❌"}</p>
           </div>
         </details>
-      </div>
+      </div> */}
     </div>
   );
 };

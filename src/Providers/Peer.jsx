@@ -19,7 +19,6 @@ export const PeerProvider = ({ children }) => {
   const pendingCandidatesRef = useRef([]);
 
   const createPeerConnection = useCallback(() => {
-    // Close existing connection if any
     if (peerRef.current) {
       peerRef.current.close();
     }
@@ -34,7 +33,6 @@ export const PeerProvider = ({ children }) => {
             "stun:global.stun.twilio.com:3478",
           ],
         },
-        // Free TURN servers for NAT traversal in production
         {
           urls: "turn:openrelay.metered.ca:80",
           username: "openrelayproject",
@@ -93,7 +91,6 @@ export const PeerProvider = ({ children }) => {
 
     peerRef.current = pc;
 
-    // Process any pending ICE candidates
     if (pendingCandidatesRef.current.length > 0) {
       console.log(`📥 Processing ${pendingCandidatesRef.current.length} pending ICE candidates`);
       pendingCandidatesRef.current.forEach(async (candidate) => {
@@ -146,12 +143,10 @@ export const PeerProvider = ({ children }) => {
 
       console.log("📤 Sending stream with tracks:", stream.getTracks().map(t => t.kind));
       
-      // Get existing senders
       const existingSenders = pc.getSenders();
       const tracks = stream.getTracks();
 
       for (const track of tracks) {
-        // Check if we already have a sender for this track kind
         const existingSender = existingSenders.find(s => s.track && s.track.kind === track.kind);
         if (existingSender) {
           console.log("🔄 Replacing existing track:", track.kind);
@@ -193,7 +188,6 @@ export const PeerProvider = ({ children }) => {
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       console.log("✅ Remote description (offer) set");
 
-      // Process any pending ICE candidates now that remote description is set
       if (pendingCandidatesRef.current.length > 0) {
         console.log(`📥 Processing ${pendingCandidatesRef.current.length} pending ICE candidates after setting remote description`);
         for (const candidate of pendingCandidatesRef.current) {
@@ -235,7 +229,6 @@ export const PeerProvider = ({ children }) => {
       await pc.setRemoteDescription(new RTCSessionDescription(ans));
       console.log("✅ Remote answer set");
 
-      // Process any pending ICE candidates now that remote description is set
       if (pendingCandidatesRef.current.length > 0) {
         console.log(`📥 Processing ${pendingCandidatesRef.current.length} pending ICE candidates after setting remote answer`);
         for (const candidate of pendingCandidatesRef.current) {
@@ -258,14 +251,12 @@ export const PeerProvider = ({ children }) => {
     console.log("🎯 Target email set to:", email);
   }, []);
 
-  // Initialize peer connection on mount
   useEffect(() => {
     if (!peerRef.current) {
       createPeerConnection();
     }
   }, [createPeerConnection]);
 
-  // ICE candidate handler - ONLY here, not in Room.jsx
   useEffect(() => {
     if (!socket) return;
 
@@ -281,7 +272,6 @@ export const PeerProvider = ({ children }) => {
     };
   }, [socket, handleRemoteIceCandidate]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (peerRef.current) {

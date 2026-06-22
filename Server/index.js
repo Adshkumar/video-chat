@@ -6,7 +6,6 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 8000;
 
-// Allow multiple origins for CORS (production + local dev)
 const ALLOWED_ORIGINS = [
   "https://video-chat-ten-beryl.vercel.app",
   "https://video-chat-git-main-adshkumars-projects.vercel.app",
@@ -17,12 +16,12 @@ const ALLOWED_ORIGINS = [
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, etc.)
+
       if (!origin) return callback(null, true);
       if (ALLOWED_ORIGINS.includes(origin)) {
         return callback(null, true);
       }
-      // Also allow any vercel.app subdomain for preview deployments
+
       if (origin.endsWith(".vercel.app")) {
         return callback(null, true);
       }
@@ -32,7 +31,6 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true,
   },
-  // Production socket.io settings
   pingTimeout: 60000,
   pingInterval: 25000,
   transports: ["websocket", "polling"],
@@ -56,7 +54,6 @@ io.on("connection", (socket) => {
     emailToSocketMapping.set(emailId, socket.id);
     socketToEmailMapping.set(socket.id, emailId);
 
-    // Track room members
     if (!roomMembersMapping.has(roomId)) {
       roomMembersMapping.set(roomId, new Set());
     }
@@ -112,7 +109,6 @@ io.on("connection", (socket) => {
     if (email) {
       emailToSocketMapping.delete(email);
 
-      // Remove from room members and notify others
       for (const [roomId, members] of roomMembersMapping.entries()) {
         if (members.has(email)) {
           members.delete(email);
@@ -128,7 +124,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// Health check endpoint
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
